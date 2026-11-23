@@ -1,0 +1,35 @@
+{
+  "impulse": {
+    "residual_span_ms": [
+      499.841,
+      500.136
+    ],
+    "basis_support_ms": 0.181,
+    "edge_coeffs": [
+      2,
+      2
+    ],
+    "max_residual": 0.35074641129108364
+  },
+  "boundary": {
+    "residual_span_ms": null,
+    "basis_support_ms": 0.181,
+    "edge_coeffs": [
+      2,
+      2
+    ],
+    "max_residual": 2.220446049250313e-16
+  },
+  "chirp": {
+    "residual_span_ms": [
+      397.71,
+      602.177
+    ],
+    "basis_support_ms": 0.181,
+    "edge_coeffs": [
+      2,
+      2
+    ],
+    "max_residual": 0.08068337429721886
+  }
+}

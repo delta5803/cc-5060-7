@@ -1,0 +1,718 @@
+{
+  "impulse": [
+    {
+      "name": "no-edit roundtrip",
+      "max_abs_error": 1.1102230246251565e-16,
+      "full_tree_error": 1.1102230246251565e-16,
+      "pass": true
+    },
+    {
+      "name": "coefficient/signal energy ratio",
+      "ratio": 0.9999999999999999,
+      "mode": "symmetric",
+      "pass": true
+    },
+    {
+      "name": "coefficient edit changes the audio",
+      "rms_original_db": -46.069649160810684,
+      "rms_residual_db": -57.39833261484014,
+      "max_residual": 0.10963096849750531,
+      "pass": 1.0
+    },
+    {
+      "name": "band vs subtree stroke equivalence",
+      "max_abs_error": 0.0,
+      "pass": true
+    },
+    {
+      "name": "band stroke persists across rebase",
+      "unresolved": [],
+      "gain_in_band": 0.4390443242841031,
+      "target_gain": 0.5,
+      "pre_rebase_gain_in_band": 0.766659446160243,
+      "pass": 1.0
+    },
+    {
+      "name": "subtree stroke follows descendants",
+      "old_path": "ad",
+      "edited_leaves": [
+        "adaaaa",
+        "adaaad",
+        "adaada",
+        "adaadd",
+        "adadaa",
+        "adadad",
+        "adadda",
+        "adaddd",
+        "addaaa",
+        "addaad",
+        "addada",
+        "addadd",
+        "adddaa",
+        "adddad",
+        "adddda",
+        "addddd"
+      ],
+      "pass": true,
+      "retarget_required": false
+    },
+    {
+      "name": "subtree stroke requires retarget",
+      "old_path": "adaad",
+      "reason": "node adaad is deeper than new max_level 3",
+      "candidates": [
+        "ada",
+        "ddd",
+        "dda",
+        "dad"
+      ],
+      "pass": true,
+      "retarget_required": true
+    },
+    {
+      "name": "local propagation and ringing",
+      "pass": true,
+      "skipped_sparse": true,
+      "reason": "no coefficient energy inside the edited window"
+    },
+    {
+      "name": "local propagation and ringing",
+      "edited_window_sec": [
+        0.0,
+        0.7430385487528345
+      ],
+      "residual_span_samples": [
+        22044,
+        22057
+      ],
+      "residual_span_sec": [
+        0.4998639455782313,
+        0.5001587301587301
+      ],
+      "basis_support_samples": [
+        0,
+        7
+      ],
+      "ringing_energy_fraction": 0.0,
+      "pass": true
+    },
+    {
+      "name": "cross-scale stroke re-open error",
+      "max_abs_error": 6.765421556309548e-17,
+      "edited_leaves_fine": [
+        "adaaaa",
+        "adaaad",
+        "adaada",
+        "adaadd",
+        "adadaa",
+        "adadad",
+        "adadda",
+        "adaddd",
+        "addaaa",
+        "addaad",
+        "addada",
+        "addadd",
+        "adddaa",
+        "adddad",
+        "adddda",
+        "addddd"
+      ],
+      "pass": true
+    },
+    {
+      "name": "nominal-band leakage (1.0 would be a brick wall)",
+      "node": "ad",
+      "depth": 2,
+      "energy_in_nominal_band": 0.7307011174489307,
+      "profile": [
+        0.0946,
+        0.7307,
+        0.1742,
+        0.0005
+      ],
+      "pass": true
+    }
+  ],
+  "boundary": [
+    {
+      "name": "no-edit roundtrip",
+      "max_abs_error": 1.1102230246251565e-16,
+      "full_tree_error": 1.1102230246251565e-16,
+      "pass": true
+    },
+    {
+      "name": "coefficient/signal energy ratio",
+      "ratio": 11.936473733022064,
+      "mode": "symmetric",
+      "pass": true
+    },
+    {
+      "name": "coefficient edit changes the audio",
+      "rms_original_db": -43.05934920417087,
+      "rms_residual_db": -51.28482418157543,
+      "max_residual": 0.2026624268137599,
+      "pass": 1.0
+    },
+    {
+      "name": "band vs subtree stroke equivalence",
+      "max_abs_error": 0.0,
+      "pass": true
+    },
+    {
+      "name": "band stroke persists across rebase",
+      "unresolved": [],
+      "gain_in_band": 0.6859207159977854,
+      "target_gain": 0.5,
+      "pre_rebase_gain_in_band": 0.6172645197802291,
+      "pass": 1.0
+    },
+    {
+      "name": "subtree stroke follows descendants",
+      "old_path": "ad",
+      "edited_leaves": [
+        "adaaaa",
+        "adaaad",
+        "adaada",
+        "adaadd",
+        "adadaa",
+        "adadad",
+        "adadda",
+        "adaddd",
+        "addaaa",
+        "addaad",
+        "addada",
+        "addadd",
+        "adddaa",
+        "adddad",
+        "adddda",
+        "addddd"
+      ],
+      "pass": true,
+      "retarget_required": false
+    },
+    {
+      "name": "subtree stroke requires retarget",
+      "old_path": "adaad",
+      "reason": "node adaad is deeper than new max_level 3",
+      "candidates": [
+        "ada",
+        "ddd",
+        "dda",
+        "dad"
+      ],
+      "pass": true,
+      "retarget_required": true
+    },
+    {
+      "name": "local propagation and ringing",
+      "pass": true,
+      "skipped_sparse": true,
+      "reason": "no coefficient energy inside the edited window"
+    },
+    {
+      "name": "local propagation and ringing",
+      "edited_window_sec": [
+        0.0,
+        0.7430385487528345
+      ],
+      "residual_span_samples": [
+        0,
+        32767
+      ],
+      "residual_span_sec": [
+        0.0,
+        0.743015873015873
+      ],
+      "basis_support_samples": [
+        0,
+        7
+      ],
+      "ringing_energy_fraction": 0.0,
+      "pass": true
+    },
+    {
+      "name": "cross-scale stroke re-open error",
+      "max_abs_error": 1.6653345369377348e-16,
+      "edited_leaves_fine": [
+        "adaaaa",
+        "adaaad",
+        "adaada",
+        "adaadd",
+        "adadaa",
+        "adadad",
+        "adadda",
+        "adaddd",
+        "addaaa",
+        "addaad",
+        "addada",
+        "addadd",
+        "adddaa",
+        "adddad",
+        "adddda",
+        "addddd"
+      ],
+      "pass": true
+    },
+    {
+      "name": "nominal-band leakage (1.0 would be a brick wall)",
+      "node": "ad",
+      "depth": 2,
+      "energy_in_nominal_band": 0.7307011174489307,
+      "profile": [
+        0.0946,
+        0.7307,
+        0.1742,
+        0.0005
+      ],
+      "pass": true
+    }
+  ],
+  "chirp": [
+    {
+      "name": "no-edit roundtrip",
+      "max_abs_error": 6.106226635438361e-16,
+      "full_tree_error": 6.106226635438361e-16,
+      "pass": true
+    },
+    {
+      "name": "coefficient/signal energy ratio",
+      "ratio": 1.002409341813535,
+      "mode": "symmetric",
+      "pass": true
+    },
+    {
+      "name": "coefficient edit changes the audio",
+      "rms_original_db": -9.030975923413727,
+      "rms_residual_db": -17.24251283613433,
+      "max_residual": 0.4189093147868328,
+      "pass": 1.0
+    },
+    {
+      "name": "band vs subtree stroke equivalence",
+      "max_abs_error": 0.0,
+      "pass": true
+    },
+    {
+      "name": "band stroke persists across rebase",
+      "unresolved": [],
+      "gain_in_band": 0.6185662464542662,
+      "target_gain": 0.5,
+      "pre_rebase_gain_in_band": 0.6477366111559453,
+      "pass": 1.0
+    },
+    {
+      "name": "subtree stroke follows descendants",
+      "old_path": "ad",
+      "edited_leaves": [
+        "adaaaa",
+        "adaaad",
+        "adaada",
+        "adaadd",
+        "adadaa",
+        "adadad",
+        "adadda",
+        "adaddd",
+        "addaaa",
+        "addaad",
+        "addada",
+        "addadd",
+        "adddaa",
+        "adddad",
+        "adddda",
+        "addddd"
+      ],
+      "pass": true,
+      "retarget_required": false
+    },
+    {
+      "name": "subtree stroke requires retarget",
+      "old_path": "adaad",
+      "reason": "node adaad is deeper than new max_level 3",
+      "candidates": [
+        "ada",
+        "ddd",
+        "dda",
+        "dad"
+      ],
+      "pass": true,
+      "retarget_required": true
+    },
+    {
+      "name": "local propagation and ringing",
+      "edited_window_sec": [
+        0.19996865176878773,
+        0.40002795115850415
+      ],
+      "residual_span_samples": [
+        8678,
+        17759
+      ],
+      "residual_span_sec": [
+        0.19678004535147392,
+        0.4026984126984127
+      ],
+      "basis_support_samples": [
+        2,
+        23
+      ],
+      "ringing_energy_fraction": 0.019467668155320382,
+      "pass": true
+    },
+    {
+      "name": "local propagation and ringing",
+      "edited_window_sec": [
+        0.0,
+        0.7430385487528345
+      ],
+      "residual_span_samples": [
+        0,
+        32767
+      ],
+      "residual_span_sec": [
+        0.0,
+        0.743015873015873
+      ],
+      "basis_support_samples": [
+        0,
+        7
+      ],
+      "ringing_energy_fraction": 0.0,
+      "pass": true
+    },
+    {
+      "name": "cross-scale stroke re-open error",
+      "max_abs_error": 5.551115123125783e-16,
+      "edited_leaves_fine": [
+        "adaaaa",
+        "adaaad",
+        "adaada",
+        "adaadd",
+        "adadaa",
+        "adadad",
+        "adadda",
+        "adaddd",
+        "addaaa",
+        "addaad",
+        "addada",
+        "addadd",
+        "adddaa",
+        "adddad",
+        "adddda",
+        "addddd"
+      ],
+      "pass": true
+    },
+    {
+      "name": "nominal-band leakage (1.0 would be a brick wall)",
+      "node": "ad",
+      "depth": 2,
+      "energy_in_nominal_band": 0.7307011174489307,
+      "profile": [
+        0.0946,
+        0.7307,
+        0.1742,
+        0.0005
+      ],
+      "pass": true
+    }
+  ],
+  "noise": [
+    {
+      "name": "no-edit roundtrip",
+      "max_abs_error": 3.885780586188048e-16,
+      "full_tree_error": 3.885780586188048e-16,
+      "pass": true
+    },
+    {
+      "name": "coefficient/signal energy ratio",
+      "ratio": 1.0053585867911392,
+      "mode": "symmetric",
+      "pass": true
+    },
+    {
+      "name": "coefficient edit changes the audio",
+      "rms_original_db": -17.29040116526601,
+      "rms_residual_db": -40.01078899199595,
+      "max_residual": 0.037268869046585065,
+      "pass": 1.0
+    },
+    {
+      "name": "band vs subtree stroke equivalence",
+      "max_abs_error": 0.0,
+      "pass": true
+    },
+    {
+      "name": "band stroke persists across rebase",
+      "unresolved": [],
+      "gain_in_band": NaN,
+      "target_gain": 0.5,
+      "pass": true,
+      "skipped_sparse": true,
+      "reason": "original signal has negligible energy in band"
+    },
+    {
+      "name": "subtree stroke follows descendants",
+      "old_path": "ad",
+      "edited_leaves": [
+        "adaaaa",
+        "adaaad",
+        "adaada",
+        "adaadd",
+        "adadaa",
+        "adadad",
+        "adadda",
+        "adaddd",
+        "addaaa",
+        "addaad",
+        "addada",
+        "addadd",
+        "adddaa",
+        "adddad",
+        "adddda",
+        "addddd"
+      ],
+      "pass": true,
+      "retarget_required": false
+    },
+    {
+      "name": "subtree stroke requires retarget",
+      "old_path": "adaad",
+      "reason": "node adaad is deeper than new max_level 3",
+      "candidates": [
+        "ada",
+        "ddd",
+        "dda",
+        "dad"
+      ],
+      "pass": true,
+      "retarget_required": true
+    },
+    {
+      "name": "local propagation and ringing",
+      "edited_window_sec": [
+        0.19996865176878773,
+        0.40002795115850415
+      ],
+      "residual_span_samples": [
+        8678,
+        17759
+      ],
+      "residual_span_sec": [
+        0.19678004535147392,
+        0.4026984126984127
+      ],
+      "basis_support_samples": [
+        2,
+        23
+      ],
+      "ringing_energy_fraction": 0.0015800047516196481,
+      "pass": true
+    },
+    {
+      "name": "local propagation and ringing",
+      "edited_window_sec": [
+        0.0,
+        0.7430385487528345
+      ],
+      "residual_span_samples": [
+        0,
+        32767
+      ],
+      "residual_span_sec": [
+        0.0,
+        0.743015873015873
+      ],
+      "basis_support_samples": [
+        0,
+        7
+      ],
+      "ringing_energy_fraction": 0.0,
+      "pass": true
+    },
+    {
+      "name": "cross-scale stroke re-open error",
+      "max_abs_error": 3.0531133177191805e-16,
+      "edited_leaves_fine": [
+        "adaaaa",
+        "adaaad",
+        "adaada",
+        "adaadd",
+        "adadaa",
+        "adadad",
+        "adadda",
+        "adaddd",
+        "addaaa",
+        "addaad",
+        "addada",
+        "addadd",
+        "adddaa",
+        "adddad",
+        "adddda",
+        "addddd"
+      ],
+      "pass": true
+    },
+    {
+      "name": "nominal-band leakage (1.0 would be a brick wall)",
+      "node": "ad",
+      "depth": 2,
+      "energy_in_nominal_band": 0.7307011174489307,
+      "profile": [
+        0.0946,
+        0.7307,
+        0.1742,
+        0.0005
+      ],
+      "pass": true
+    }
+  ],
+  "demo": [
+    {
+      "name": "no-edit roundtrip",
+      "max_abs_error": 5.551115123125783e-16,
+      "full_tree_error": 5.551115123125783e-16,
+      "pass": true
+    },
+    {
+      "name": "coefficient/signal energy ratio",
+      "ratio": 1.0023812615645993,
+      "mode": "symmetric",
+      "pass": true
+    },
+    {
+      "name": "coefficient edit changes the audio",
+      "rms_original_db": -11.29593658731366,
+      "rms_residual_db": -23.946203819422664,
+      "max_residual": 0.28633993458602863,
+      "pass": 1.0
+    },
+    {
+      "name": "band vs subtree stroke equivalence",
+      "max_abs_error": 0.0,
+      "pass": true
+    },
+    {
+      "name": "band stroke persists across rebase",
+      "unresolved": [],
+      "gain_in_band": 0.7950202560407628,
+      "target_gain": 0.5,
+      "pre_rebase_gain_in_band": 0.8286336274495678,
+      "pass": 1.0
+    },
+    {
+      "name": "subtree stroke follows descendants",
+      "old_path": "ad",
+      "edited_leaves": [
+        "adaaaa",
+        "adaaad",
+        "adaada",
+        "adaadd",
+        "adadaa",
+        "adadad",
+        "adadda",
+        "adaddd",
+        "addaaa",
+        "addaad",
+        "addada",
+        "addadd",
+        "adddaa",
+        "adddad",
+        "adddda",
+        "addddd"
+      ],
+      "pass": true,
+      "retarget_required": false
+    },
+    {
+      "name": "subtree stroke requires retarget",
+      "old_path": "adaad",
+      "reason": "node adaad is deeper than new max_level 3",
+      "candidates": [
+        "ada",
+        "ddd",
+        "dda",
+        "dad"
+      ],
+      "pass": true,
+      "retarget_required": true
+    },
+    {
+      "name": "local propagation and ringing",
+      "edited_window_sec": [
+        0.19996865176878773,
+        0.40002795115850415
+      ],
+      "residual_span_samples": [
+        8678,
+        17759
+      ],
+      "residual_span_sec": [
+        0.19678004535147392,
+        0.4026984126984127
+      ],
+      "basis_support_samples": [
+        2,
+        23
+      ],
+      "ringing_energy_fraction": 0.002382698336299187,
+      "pass": true
+    },
+    {
+      "name": "local propagation and ringing",
+      "edited_window_sec": [
+        0.0,
+        0.7430385487528345
+      ],
+      "residual_span_samples": [
+        0,
+        32767
+      ],
+      "residual_span_sec": [
+        0.0,
+        0.743015873015873
+      ],
+      "basis_support_samples": [
+        0,
+        7
+      ],
+      "ringing_energy_fraction": 0.0,
+      "pass": true
+    },
+    {
+      "name": "cross-scale stroke re-open error",
+      "max_abs_error": 4.440892098500626e-16,
+      "edited_leaves_fine": [
+        "adaaaa",
+        "adaaad",
+        "adaada",
+        "adaadd",
+        "adadaa",
+        "adadad",
+        "adadda",
+        "adaddd",
+        "addaaa",
+        "addaad",
+        "addada",
+        "addadd",
+        "adddaa",
+        "adddad",
+        "adddda",
+        "addddd"
+      ],
+      "pass": true
+    },
+    {
+      "name": "nominal-band leakage (1.0 would be a brick wall)",
+      "node": "ad",
+      "depth": 2,
+      "energy_in_nominal_band": 0.7307011174489307,
+      "profile": [
+        0.0946,
+        0.7307,
+        0.1742,
+        0.0005
+      ],
+      "pass": true
+    }
+  ]
+}

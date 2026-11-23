@@ -1,0 +1,132 @@
+{
+  "audio_name": "retarget_demo_src.wav",
+  "sr": 44100,
+  "n": 32768,
+  "basis": {
+    "wavelet": "db4",
+    "max_level": 3,
+    "mode": "periodization",
+    "leaves": [
+      "aaa",
+      "aad",
+      "ada",
+      "add",
+      "daa",
+      "dad",
+      "dda",
+      "ddd"
+    ]
+  },
+  "strokes": [
+    {
+      "kind": "subtree",
+      "id": "sd",
+      "node_path": "ada",
+      "gain": 0.2,
+      "t0": 0.0,
+      "t1": null,
+      "origin_band_hz": [
+        8268.75,
+        11025.0
+      ]
+    }
+  ],
+  "retarget_log": [
+    {
+      "from": {
+        "wavelet": "db4",
+        "max_level": 6,
+        "mode": "periodization",
+        "leaves": [
+          "aaaaaa",
+          "aaaaad",
+          "aaaada",
+          "aaaadd",
+          "aaadaa",
+          "aaadad",
+          "aaadda",
+          "aaaddd",
+          "aadaaa",
+          "aadaad",
+          "aadada",
+          "aadadd",
+          "aaddaa",
+          "aaddad",
+          "aaddda",
+          "aadddd",
+          "adaaaa",
+          "adaaad",
+          "adaada",
+          "adaadd",
+          "adadaa",
+          "adadad",
+          "adadda",
+          "adaddd",
+          "addaaa",
+          "addaad",
+          "addada",
+          "addadd",
+          "adddaa",
+          "adddad",
+          "adddda",
+          "addddd",
+          "daaaaa",
+          "daaaad",
+          "daaada",
+          "daaadd",
+          "daadaa",
+          "daadad",
+          "daadda",
+          "daaddd",
+          "dadaaa",
+          "dadaad",
+          "dadada",
+          "dadadd",
+          "daddaa",
+          "daddad",
+          "daddda",
+          "dadddd",
+          "ddaaaa",
+          "ddaaad",
+          "ddaada",
+          "ddaadd",
+          "ddadaa",
+          "ddadad",
+          "ddadda",
+          "ddaddd",
+          "dddaaa",
+          "dddaad",
+          "dddada",
+          "dddadd",
+          "ddddaa",
+          "ddddad",
+          "ddddda",
+          "dddddd"
+        ]
+      },
+      "to": {
+        "wavelet": "db4",
+        "max_level": 3,
+        "mode": "periodization",
+        "leaves": [
+          "aaa",
+          "aad",
+          "ada",
+          "add",
+          "daa",
+          "dad",
+          "dda",
+          "ddd"
+        ]
+      },
+      "unresolved": [
+        "sd"
+      ]
+    },
+    {
+      "retarget": "sd",
+      "old": "adaad",
+      "new": "ada"
+    }
+  ]
+}
