@@ -178,12 +178,53 @@ def cmd_retarget(args) -> None:
           f"unresolved now: {bad or 'none'}")
 
 
+def cmd_edit(args) -> None:
+    """Apply a gain edit to one leaf node, keyed by its stable identity."""
+    proj = _load_project(args.project)
+    try:
+        rec = proj.add_node_edit(args.node, args.gain, args.t0,
+                                 args.t1, tag=args.tag or "")
+    except ValueError as e:
+        print(f"edit rejected: {e}", file=sys.stderr)
+        sys.exit(2)
+    proj.save(args.project)
+    print(f"edit {rec.node} gain={rec.gain} "
+          f"window=[{rec.t0},{rec.t1 if rec.t1 is not None else 'end'}] "
+          f"tag={rec.tag or '-'} (tree {proj.tree.version.id[:12]})")
+
+
+def cmd_undo(args) -> None:
+    """Undo the most recent edit by node identity or tag."""
+    proj = _load_project(args.project)
+    got = proj.undo(tag=args.tag, path=args.node)
+    if got is None:
+        print("nothing to undo", file=sys.stderr)
+        sys.exit(1)
+    proj.save(args.project)
+    print(f"undid edit on {got.node} (gain={got.gain})")
+
+
+def cmd_edits(args) -> None:
+    """List the persisted coefficient-edit state and its node identities."""
+    proj = _load_project(args.project)
+    print(f"tree version {proj.tree.version.id[:12]} "
+          f"({len(proj.tree.leaves)} leaves)")
+    for e in proj.edits.edits:
+        print(f"  {e.node} gain={e.gain} "
+              f"window=[{e.t0},{e.t1 if e.t1 is not None else 'end'}] "
+              f"tag={e.tag or '-'}")
+    idx = proj.edits.identity_index()
+    print(f"identity index: {idx}")
+
+
 def cmd_subdivide(args) -> None:
     proj = _load_project(args.project)
-    proj.basis.subdivide(args.node)
+    migration = proj.subdivide(args.node)
     proj.save(args.project)
     report = proj.dry_run()
     print(f"subdivided {args.node}; leaves={proj.basis.leaves}")
+    print(f"  edit migration: remapped={len(migration.remapped)} "
+          f"rejected={len(migration.rejected)}")
     for u in report.unresolved:
         print(f"  UNRESOLVED {u.stroke_id}: {u.reason}")
 
@@ -219,6 +260,99 @@ def cmd_probe(args) -> None:
     table["gain_low_db"] = 20 * np.log10(table["gain_low"])
     table["gain_high_db"] = 20 * np.log10(table["gain_high"])
     print(json.dumps(table, indent=2))
+
+
+def cmd_diff(args) -> None:
+    """Before/after differential evidence for a tree reconstruction change.
+
+    Runs, on a clean project built from a synthetic signal or WAV:
+      1. boundary short-clip before/after (tree swap keeps the clip identical
+         within floating point);
+      2. a scale switch (depth change) before/after, reporting reconstruction
+         error and which node identities the migrated edits landed on.
+    Emits a JSON report so the numbers are execution evidence, not prose.
+    """
+    from .signals import boundary_impulses as _bi
+    sr = args.sr
+    n = args.n
+    if args.signal == "wav":
+        sig, sr = read_wav(args.wav)
+    elif args.signal == "boundary":
+        sig = _bi(n, sr)
+    else:
+        sig, _ = SIGNALS[args.signal](n, sr)
+
+    report = {"signal": args.signal, "n": int(sig.size), "sr": sr}
+
+    # (1) boundary short clip: cut a short window near an edge and compare the
+    # reconstruction of the same source under the same basis before/after a
+    # no-op tree "swap" (rebuild + resync).  The clip must be bit-identical.
+    clip_n = min(sig.size, int(0.05 * sr))
+    edge_clip = sig[sig.size - clip_n:].copy()
+    proj = Project(sig, sr, "diff.wav",
+                   BasisSpec(args.wavelet, args.level, args.mode))
+    base_tree = proj.tree.version.id
+    v_before = proj.build_engine().reconstruct(
+        proj.tree.leaves, tree_version=proj.tree.version.id)
+    proj.sync_tree()
+    v_after = proj.build_engine().reconstruct(
+        proj.tree.leaves, tree_version=proj.tree.version.id)
+    clip_err = float(np.max(np.abs(v_before[-clip_n:] - v_after[-clip_n:])))
+    report["boundary_short_clip"] = {
+        "clip_samples": clip_n, "version_id": base_tree[:12],
+        "max_abs_diff": clip_err, "pass": clip_err < 1e-12,
+    }
+
+    # (2) scale switch: apply a full-length edit at a coarse leaf, record its
+    # node ownership + reconstruction error, switch depth, and record the
+    # migrated ownership + reconstruction error.  A full-length subtree edit
+    # has the same intent at any depth, so the two renders must agree to
+    # floating point; a *windowed* edit legitimately differs because the
+    # coefficient-to-time map changes with depth, and that difference is
+    # reported rather than hidden.
+    proj2 = Project(sig, sr, "diff.wav",
+                    BasisSpec(args.wavelet, 3, args.mode,
+                              leaves=["aa", "ad", "da", "dd"]))
+    proj2.add_node_edit("ad", 0.4, tag="diff")          # full length
+    y_coarse = proj2.render()[0] if not proj2.dry_run().unresolved else None
+    own_before = sorted(str(e.node) for e in proj2.edits.edits)
+    proj2.rebase(max_level=args.level)
+    y_fine = proj2.render()[0] if not proj2.dry_run().unresolved else None
+    own_after = sorted(str(e.node) for e in proj2.edits.edits)
+    rec = proj2.build_engine().reconstruct(proj2.tree.leaves,
+                                           tree_version=proj2.tree.version.id)
+    # windowed variant reported for contrast (not an equality claim)
+    pw = Project(sig, sr, "diff.wav",
+                 BasisSpec(args.wavelet, 3, args.mode,
+                           leaves=["aa", "ad", "da", "dd"]))
+    pw.add_node_edit("ad", 0.4, t0=0.2, t1=0.4, tag="w")
+    yw_coarse = pw.render()[0]
+    pw.rebase(max_level=args.level)
+    yw_fine = pw.render()[0]
+    windowed_diff = float(np.max(np.abs(yw_coarse - yw_fine)))
+    full_diff = (float(np.max(np.abs(y_coarse - y_fine)))
+                 if y_coarse is not None and y_fine is not None else None)
+    rec_err = float(np.max(np.abs(rec - sig)))
+    under = all(p.split(":", 1)[1].startswith("ad") for p in own_after)
+    report["scale_switch"] = {
+        "from_depth": 3, "to_depth": args.level,
+        "reconstruction_error_signal": rec_err,
+        "full_length_render_max_diff": full_diff,
+        "windowed_render_max_diff_reported_not_equal": windowed_diff,
+        "ownership_before": own_before,
+        "ownership_after": own_after,
+        "under_ancestor": under,
+        "pass": (full_diff is not None and full_diff < 1e-10
+                 and rec_err < 1e-10 and under),
+    }
+    with open(args.out, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, default=float)
+    print(json.dumps(report, indent=2, default=float))
+    ok = (report["boundary_short_clip"]["pass"]
+          and report["scale_switch"]["pass"])
+    print(f"\nreport -> {args.out}; equivalent={ok}")
+    if not ok:
+        sys.exit(1)
 
 
 def cmd_verify(args) -> None:
@@ -303,6 +437,20 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("stroke_id"); q.add_argument("node")
     q.set_defaults(func=cmd_retarget)
 
+    q = sub.add_parser("edit"); q.add_argument("project")
+    q.add_argument("node"); q.add_argument("--gain", type=float, required=True)
+    q.add_argument("--t0", type=float, default=0.0)
+    q.add_argument("--t1", type=float, default=None)
+    q.add_argument("--tag", default="")
+    q.set_defaults(func=cmd_edit)
+
+    q = sub.add_parser("undo"); q.add_argument("project")
+    q.add_argument("--node"); q.add_argument("--tag")
+    q.set_defaults(func=cmd_undo)
+
+    q = sub.add_parser("edits"); q.add_argument("project")
+    q.set_defaults(func=cmd_edits)
+
     q = sub.add_parser("subdivide"); q.add_argument("project"); q.add_argument("node")
     q.set_defaults(func=cmd_subdivide)
 
@@ -319,6 +467,16 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("report"); q.add_argument("--n", type=int, default=32768)
     q.add_argument("--sr", type=int, default=44100)
     q.set_defaults(func=cmd_verify)
+
+    q = sub.add_parser("diff")
+    q.add_argument("out")
+    q.add_argument("--signal", choices=list(SIGNALS) + ["wav"], default="chirp")
+    q.add_argument("--wav"); q.add_argument("--n", type=int, default=16384)
+    q.add_argument("--sr", type=int, default=44100)
+    q.add_argument("--wavelet", default="db4")
+    q.add_argument("--level", type=int, default=5)
+    q.add_argument("--mode", default="periodization")
+    q.set_defaults(func=cmd_diff)
     return p
 
 

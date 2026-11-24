@@ -43,6 +43,11 @@ python -m soundsculpt.cli render p.json edited.wav
 python -m soundsculpt.cli rebase p.json --wavelet sym6 --level 6
 python -m soundsculpt.cli retarget p.json s1 ada   # 人工重定目标
 
+# 按节点身份施加系数编辑（时间窗，节点必须是当前叶），并撤销
+python -m soundsculpt.cli edit p.json adda --gain 0.5 --t0 0.1 --t1 0.3 --tag e1
+python -m soundsculpt.cli edits p.json          # 列出节点身份 + 树版本
+python -m soundsculpt.cli undo p.json --tag e1  # 按节点身份撤销
+
 # 一高一低探测音：测量重开后的实际增益（FFT 读数，含邻带泄漏）
 python -m soundsculpt.cli probe p.json --low 300 --high 7000
 
@@ -51,6 +56,9 @@ python -m soundsculpt.cli audition p.json ad node_ad.wav
 
 # 数值验证电池（脉冲/边界/变频音/窄带噪声/demo 五类信号）
 python -m soundsculpt.cli verify report.json
+
+# 换树 + 边界短片的前后差分证据（重建误差与节点归属）
+python -m soundsculpt.cli diff report_diff.json --signal chirp
 ```
 
 ## 浏览器界面
@@ -59,9 +67,44 @@ python -m soundsculpt.cli verify report.json
 python -m soundsculpt.web p.json --port 8000
 ```
 
-可展开树、查看每节点标称频带/实测支持/边缘系数/泄漏剖面、试听单节点、
-施加两种笔划、局部细分（subdivide）、重选基并对 unresolved 笔划点选
-候选节点重定目标、跑双探测音、下载渲染 WAV。
+启动后打开 `http://127.0.0.1:8000/`。界面包含：
+
+- **左上分解树**：可展开、查看每节点标称频带/实测支持/边缘系数/泄漏剖面、
+  试听单节点、局部细分（subdivide）。
+- **频谱编辑窗口**（右上）：绘制当前渲染结果的时频能量图与波形；点击某个
+  时频单元即选中一个当前叶节点 + 时间窗（绿色框）。`scale depth` 滑块切换
+  分解尺度，「switch scale」通过 WPT 内核重选深度并把编辑沿祖先路径迁移；
+  「apply edit to picked node」把增益写入所选节点并重绘频谱与波形；
+  「undo」按节点身份撤销。失败（如选中的不是叶节点）会在消息区显示。
+- 两种笔划、重选基并对 unresolved 笔划点选候选节点重定目标、跑双探测音、
+  下载渲染 WAV。
+
+界面的所有编辑都由 `soundsculpt` 的小波内核驱动：`/api/edit` 调用
+`Project.add_node_edit`（按 `NodeId` 绑定），`/api/scale` 调用 `Project.rebase`
+（迁移编辑），渲染始终固定到显式的树版本，不会读取隐式/默认的树。
+
+## 分解树接口（重构边界）
+
+重构把原先缠在一起的 `BasisSpec` / `WPTEngine` 拆成三块，彼此以明确接口为界：
+
+- **基函数配置** `BasisSpec`（`wavelet`/`max_level`/`mode`/`leaves`）——保存
+  格式不变，旧工程 JSON 可直接加载。
+- **分解树** `DecompositionTree`（`soundsculpt/tree.py`）——稀疏保存叶切分
+  （**不**预展平到最深一层），提供 `TreeSpec`、稳定的 `NodeId`、内容哈希的
+  `TreeVersion`。逆变换 `WPTEngine.reconstruct(..., tree_version=...)` 只接受
+  显式版本，版本不符抛 `StaleTreeVersion`。
+- **编辑系数状态** `EditState`（`soundsculpt/edits.py`）——每条记录以 `NodeId`
+  为键，含秒级时间窗意图。撤销与保存读同一身份。
+
+树版本变化时的编辑迁移规则（`EditState.migrate`）：
+
+- 旧节点在新树中是某些叶的**祖先**（细分）→ 沿祖先路径重新映射到这些叶；
+- 新树只有旧节点的**粗祖先**（合并/降深度）→ **拒绝**该编辑并回滚，避免把
+  细编辑写到从未触碰的旁支（有测试断言旁支系数未被回滚）；
+- 无任何可比节点 → 拒绝。
+
+「保留原树供非破坏求值」：`Project.evaluate_tree(tree, state)` 用一对冻结的
+`(tree, state)` 求值，互不修改；版本不匹配会抛 `StaleTreeVersion`。
 
 ## 关键设计与诚实的限制
 
@@ -83,6 +126,12 @@ python -m soundsculpt.web p.json --port 8000
 
 ## 目录
 
-- `soundsculpt/` 真实变换与应用代码（wpt / basis / verification / web / cli）
-- `tests/` 33 个 pytest 用例
+- `soundsculpt/` 真实变换与应用代码
+  - `paths.py` 纯路径/频带几何（无状态）
+  - `tree.py` 显式、带版本的分解树（新边界）
+  - `edits.py` 按节点身份的系数编辑状态、迁移与撤销
+  - `wpt.py` 变换引擎（逆变换固定到显式树版本，不再预展平）
+  - `basis.py` 基配置、笔划、`Project`（撤销/保存共享节点身份）
+  - `verification.py` / `web.py` / `cli.py`
+- `tests/` 46 个 pytest 用例（含 `test_tree_interface.py` 的接口契约）
 - `outputs/` 处理后的 WAV、探测音、节点试听、传播与验证报告、工程 JSON

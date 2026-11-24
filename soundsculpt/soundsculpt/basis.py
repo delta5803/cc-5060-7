@@ -1,4 +1,4 @@
-"""Basis selection, stroke model and rebase/retarget logic.
+"""Basis selection, stroke model, coefficient-edit state and rebase/retarget.
 
 Two stroke kinds carry *different* semantics on purpose:
 
@@ -9,6 +9,15 @@ Two stroke kinds carry *different* semantics on purpose:
   stroke is held unresolved until the user picks a new target.
 
 Both strokes also carry an optional time window in seconds and a linear gain.
+
+Three pieces of state are kept apart so a tree change only invalidates what
+the change actually touched:
+
+* :class:`BasisSpec` — basis-function configuration + the editable leaf cut
+  (delegating cut arithmetic to :class:`~soundsculpt.tree.DecompositionTree`);
+* :class:`DecompositionTree` — structural identity and version (see ``tree``);
+* :class:`EditState` — the coefficient edits actually applied, each keyed by a
+  stable :class:`NodeId`.  Undo and save both read this same identity.
 """
 from __future__ import annotations
 
@@ -19,11 +28,21 @@ from dataclasses import dataclass, field, asdict
 import numpy as np
 
 from .wpt import (WPTEngine, all_paths, nominal_band, descendants)
+from .tree import DecompositionTree, TreeSpec
+from .edits import EditState, MigrationReport, NodeEdit
 
 
 # --------------------------------------------------------------------- basis
 @dataclass
 class BasisSpec:
+    """Basis-function configuration plus the editable leaf cut.
+
+    The cut operations delegate to :class:`DecompositionTree`, but ``BasisSpec``
+    keeps the historical field layout so saved projects and callers that pass
+    ``BasisSpec(wavelet, max_level, mode, leaves)`` keep working.  The
+    structural tree (a versioned :class:`~soundsculpt.tree.DecompositionTree`)
+    is built on demand via :meth:`tree`.
+    """
     wavelet: str = "db4"
     max_level: int = 5
     mode: str = "symmetric"
@@ -40,43 +59,29 @@ class BasisSpec:
     def from_dict(cls, d: dict) -> "BasisSpec":
         return cls(d["wavelet"], int(d["max_level"]), d["mode"], list(d["leaves"]))
 
+    def tree(self, sr: int, n: int) -> DecompositionTree:
+        """Build the explicit, versioned tree for this basis and geometry."""
+        return DecompositionTree(TreeSpec(self.wavelet, self.max_level,
+                                          self.mode, sr, n), list(self.leaves))
+
     def subdivide(self, node: str) -> None:
         """Refine one node one level, whether or not it is a current leaf.
 
-        If it is a leaf, replace it by its two children.  If it is an
-        internal node, replace every current leaf under it by that leaf's
-        own two children (the whole subtree gains one level of editable
-        nodes).  Reconstruction stays exact throughout.
+        Delegates to :meth:`DecompositionTree.subdivide`, so the cut rules live
+        in exactly one place.
         """
-        if len(node) >= self.max_level:
-            raise ValueError(f"{node} is already at the maximum depth")
-        if node in self.leaves:
-            i = self.leaves.index(node)
-            self.leaves[i:i + 1] = [node + "a", node + "d"]
-            return
-        under = [lf for lf in self.leaves if lf.startswith(node)]
-        if not under:
-            raise ValueError(f"{node} has no covering leaf in the basis")
-        # leaves already at the maximum depth cannot be split further; only
-        # the leaves that still have room gain a level
-        splittable = [lf for lf in under if len(lf) < self.max_level]
-        if not splittable:
-            raise ValueError(f"subtree under {node} is already at max depth")
-        new_leaves = []
-        for lf in self.leaves:
-            if lf in splittable:
-                new_leaves.extend([lf + "a", lf + "d"])
-            else:
-                new_leaves.append(lf)
-        self.leaves = new_leaves
+        self.leaves = self._cut().subdivide(node).leaves
 
     def coarsen(self, pair_parent: str) -> None:
         """Merge a sibling pair back into their parent (local coarsening)."""
-        a, d = pair_parent + "a", pair_parent + "d"
-        if a not in self.leaves or d not in self.leaves:
-            raise ValueError(f"{a}/{d} are not both current leaves")
-        i = self.leaves.index(a)
-        self.leaves[i:i + 2] = [pair_parent]
+        self.leaves = self._cut().coarsen(pair_parent).leaves
+
+    def _cut(self) -> DecompositionTree:
+        # Structural cut arithmetic does not depend on sr/n, so a nominal
+        # geometry is enough here; the real tree is built where audio is known.
+        return DecompositionTree(TreeSpec(self.wavelet, self.max_level,
+                                          self.mode, 1, 1 << self.max_level),
+                                 list(self.leaves))
 
 
 # -------------------------------------------------------------------- strokes
@@ -243,7 +248,8 @@ def _fmt_band(b: tuple[float, float]) -> str:
 
 
 def apply_edits(engine: WPTEngine, edits: list[CoeffEdit],
-                basis: BasisSpec) -> np.ndarray:
+                basis: BasisSpec, *,
+                tree_version: str | None = None) -> np.ndarray:
     # Compose gains per (path, coefficient) so overlapping strokes multiply
     # rather than overwrite.  Edits start from the engine's current data.
     staged: dict[str, np.ndarray] = {}
@@ -253,7 +259,9 @@ def apply_edits(engine: WPTEngine, edits: list[CoeffEdit],
         staged[e.path][e.i0:e.i1] *= e.gain
     for path, data in staged.items():
         engine.set_coeffs(path, data)
-    return engine.reconstruct(basis.leaves)
+    # Reconstruction is pinned to an explicit tree version whenever one is
+    # supplied, so the inverse transform cannot read an ambient/different cut.
+    return engine.reconstruct(basis.leaves, tree_version=tree_version)
 
 
 # -------------------------------------------------------------------- project
@@ -269,6 +277,12 @@ class Project:
         self.basis = basis or BasisSpec()
         self.strokes: list = strokes or []
         self.retarget_log: list[dict] = []
+        # The explicit decomposition tree is the single source of truth for
+        # the leaf cut and its version; renders read *this* tree, never an
+        # ambient default.  Rebuilt whenever the basis geometry changes.
+        self.tree = self.basis.tree(self.sr, self.original.size)
+        # Coefficient-edit state (node-identity keyed) separate from strokes.
+        self.edits = EditState(self.tree.version)
 
     # ------------------------------------------------------------- persistence
     def to_dict(self) -> dict:
@@ -277,7 +291,9 @@ class Project:
             "sr": self.sr,
             "n": int(self.original.size),
             "basis": self.basis.to_dict(),
+            "tree_version": self.tree.version.id,
             "strokes": [s.to_dict() for s in self.strokes],
+            "edits": self.edits.to_dict(),
             "retarget_log": self.retarget_log,
         }
 
@@ -297,6 +313,8 @@ class Project:
         obj = cls(sig, sr, d["audio_name"], BasisSpec.from_dict(d["basis"]),
                   [stroke_from_dict(s) for s in d["strokes"]])
         obj.retarget_log = d.get("retarget_log", [])
+        if "edits" in d:
+            obj.edits = EditState.from_dict(d["edits"])
         return obj
 
     # ---------------------------------------------------------------- rendering
@@ -304,7 +322,49 @@ class Project:
         return WPTEngine(self.original, self.basis.wavelet,
                          self.basis.max_level, self.basis.mode, self.sr)
 
+    def sync_tree(self) -> DecompositionTree:
+        """Rebuild the explicit tree from the current basis + geometry.
+
+        Rebuilds the tree object only.  Callers that change the cut are
+        responsible for migrating edit state (see :meth:`subdivide`,
+        :meth:`coarsen`, :meth:`rebase`); :meth:`_ensure_tree` handles direct
+        ``basis.leaves`` mutations.
+        """
+        self.tree = self.basis.tree(self.sr, self.original.size)
+        return self.tree
+
+    def _ensure_tree(self) -> MigrationReport | None:
+        """Re-sync if ``basis.leaves`` was mutated behind the tree's back.
+
+        Returns the migration report when a re-sync happened, else ``None``.
+        This keeps direct ``proj.basis.subdivide(...)`` callers working while
+        still pinning every render to one explicit tree version.
+        """
+        if sorted(self.tree.leaves) != sorted(self.basis.leaves):
+            new_tree = self.basis.tree(self.sr, self.original.size)
+            self.edits, migration = self.edits.migrate(new_tree)
+            self.tree = new_tree
+            return migration
+        return None
+
+    def subdivide(self, node: str) -> MigrationReport:
+        """Refine a node and migrate edit state to the new tree version."""
+        new_tree = self.tree.subdivide(node)
+        self.basis.leaves = new_tree.leaves
+        self.edits, migration = self.edits.migrate(new_tree)
+        self.tree = new_tree
+        return migration
+
+    def coarsen(self, pair_parent: str) -> MigrationReport:
+        """Merge a leaf sibling pair and migrate edit state to the new version."""
+        new_tree = self.tree.coarsen(pair_parent)
+        self.basis.leaves = new_tree.leaves
+        self.edits, migration = self.edits.migrate(new_tree)
+        self.tree = new_tree
+        return migration
+
     def render(self) -> tuple[np.ndarray, ResolutionReport]:
+        self._ensure_tree()
         engine = self.build_engine()
         report = resolve_strokes(engine, self.basis, self.strokes)
         if report.unresolved:
@@ -312,12 +372,61 @@ class Project:
             # intent by raising; callers surface this to the user.
             ids = ", ".join(u.stroke_id for u in report.unresolved)
             raise UnresolvedError(ids, report)
-        out = apply_edits(engine, report.edits, self.basis)
+        # Node edits (identity-keyed) compose with stroke edits; both are
+        # staged in one pass so overlapping gains multiply consistently.
+        edits = list(report.edits) + self.edits.resolve(engine, self.tree)
+        out = apply_edits(engine, edits, self.basis,
+                          tree_version=self.tree.version.id)
         return out, report
 
     def dry_run(self) -> ResolutionReport:
+        self._ensure_tree()
         engine = self.build_engine()
         return resolve_strokes(engine, self.basis, self.strokes)
+
+    # ------------------------------------------------------- explicit edit state
+    def add_node_edit(self, path: str, gain: float, t0: float = 0.0,
+                      t1: float | None = None, tag: str = "") -> NodeEdit:
+        """Record a coefficient edit keyed by the current tree's node identity.
+
+        This is the identity-preserving path used by undo and save: the record
+        is bound to a :class:`NodeId`, not to a transient array offset.
+        """
+        self._ensure_tree()
+        return self.edits.add(self.tree, path, gain, t0, t1, tag)
+
+    def undo(self, tag: str | None = None, path: str | None = None
+             ) -> NodeEdit | None:
+        """Undo the most recent edit for ``tag`` / node ``path`` (identity-keyed).
+
+        The comparison is by NodeId, the same identity the saved record stores,
+        so undo cannot accidentally hit a different node with a similar offset.
+        """
+        node = self.tree.node_id(path) if path is not None else None
+        return self.edits.undo(tag=tag, node=node)
+
+    def evaluate_tree(self, tree: DecompositionTree | None = None,
+                      state: EditState | None = None) -> np.ndarray:
+        """Non-destructive evaluation against a specific tree version.
+
+        The project's live basis/strokes are not mutated: a separate engine is
+        built for the tree's own geometry, the (optionally migrated) edit state
+        is resolved against the supplied tree, and reconstruction is pinned to
+        that tree's version and leaf cut.
+        """
+        tree = tree or self.tree
+        state = state or self.edits
+        if state.version.id != tree.version.id:
+            from .tree import StaleTreeVersion
+            raise StaleTreeVersion(
+                f"edit state is bound to tree {state.version.id[:12]} but "
+                f"evaluation tree is {tree.version.id[:12]}")
+        engine = WPTEngine(self.original, tree.spec.wavelet, tree.spec.max_level,
+                           tree.spec.mode, tree.spec.sr)
+        edits = state.resolve(engine, tree)
+        cut = BasisSpec(tree.spec.wavelet, tree.spec.max_level, tree.spec.mode,
+                        leaves=tree.leaves)
+        return apply_edits(engine, edits, cut, tree_version=tree.version.id)
 
     # ------------------------------------------------------------------ rebase
     def _remap_leaves(self, old_leaves: list[str], new_level: int) -> list[str]:
@@ -361,8 +470,15 @@ class Project:
             wavelet or self.basis.wavelet, new_level,
             mode or self.basis.mode, leaves=new_leaves)
         old = self.basis
+        old_tree = self.tree
         self.basis = new_basis
+        self.sync_tree()
         engine = self.build_engine()
+
+        # Migrate coefficient-edit state along the ancestor path; rejected
+        # old-node edits are rolled back rather than applied to a stranger.
+        new_edits, migration = self.edits.migrate(self.tree)
+        self.edits = new_edits
 
         # Record origin bands for subtree strokes (once).
         for st in self.strokes:
@@ -372,6 +488,9 @@ class Project:
         report = resolve_strokes(engine, new_basis, self.strokes)
         self.retarget_log.append({
             "from": old.to_dict(), "to": new_basis.to_dict(),
+            "old_version": old_tree.version.id,
+            "new_version": self.tree.version.id,
+            "migration": migration.to_dict(),
             "unresolved": [u.stroke_id for u in report.unresolved]})
         return report
 

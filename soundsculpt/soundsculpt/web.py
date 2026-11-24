@@ -4,6 +4,13 @@ Run:  python -m soundsculpt.web <project.json> [--port 8000]
 The page exposes the real tree (not an EQ cartoon): nominal bands, measured
 basis support, edge coefficients, node audition, both stroke kinds, rebase
 with retargeting, local subdivision and the two-tone probe measurement.
+
+It also has a spectral edit window: a canvas of the rendered signal's
+time/frequency energy and waveform, a scale-depth switch, and identity-keyed
+coefficient edits with undo.  Every control is driven by the real WPT kernel
+(``/api/edit`` -> ``Project.add_node_edit``, ``/api/scale`` -> ``Project.rebase``);
+the inverse transform is pinned to the explicit tree version, never an ambient
+default.
 """
 from __future__ import annotations
 
@@ -13,6 +20,8 @@ import json
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import numpy as np
 
 from .wavio import write_wav
 from .basis import (Project, BasisSpec, SubtreeStroke,
@@ -53,6 +62,63 @@ def _node_payload(project: Project, path: str) -> dict:
     }
 
 
+def spectrum_payload(project: Project, window: int = 96) -> dict:
+    """Multiscale view of the *edited* render plus its audio.
+
+    Returns a coarse time/frequency energy grid of the rendered signal (so a
+    coefficient edit is visible in the spectrogram), a downsampled waveform,
+    and the current tree's band partition.  The editor draws this and lets the
+    user pick a band + time window that maps onto an explicit tree node, so the
+    controls are driven by the real WPT kernel, not a decorative spectrum.
+    """
+    out, _ = project.render()
+    n = out.size
+    sr = project.sr
+    # frequency rows: 0 .. sr/2 in `window` bins; time columns: ~200 slices
+    cols = 200
+    frame = max(1, n // cols)
+    # STFT magnitude, log-compressed for display
+    mag = []
+    for c in range(cols):
+        a = c * frame
+        b = min(n, a + frame)
+        seg = out[a:b]
+        if seg.size < 8:
+            mag.append([0.0] * window)
+            continue
+        spec = np.abs(np.fft.rfft(seg * np.hanning(seg.size),
+                                  n=max(256, 2 * window)))
+        freqs = np.fft.rfftfreq(max(256, 2 * window), 1.0 / sr)
+        col = []
+        for k in range(window):
+            m = (freqs >= 0.5 * sr * k / window) & (
+                freqs < 0.5 * sr * (k + 1) / window)
+            col.append(float(np.log1p(np.sum(spec[m]))))
+        mag.append(col)
+    # mag is [cols][window]; transpose to [window][cols]
+    grid = [[mag[c][k] for c in range(cols)] for k in range(window)]
+    peak = max((max(r) for r in grid), default=0.0) or 1.0
+    grid = [[round(v / peak, 4) for v in r] for r in grid]
+
+    wave_cols = 400
+    step = max(1, n // wave_cols)
+    wave = [round(float(np.max(np.abs(out[i:i + step]))), 4)
+            for i in range(0, n, step)][:wave_cols]
+
+    bands = []
+    for leaf in project.tree.leaves:
+        lo, hi = nominal_band(leaf, sr)
+        bands.append({"path": leaf, "band_hz": [lo, hi],
+                      "depth": len(leaf)})
+    return {
+        "sr": sr, "n": n, "duration": n / sr,
+        "freq_bins": window, "time_cols": cols,
+        "spectrogram": grid, "waveform": wave,
+        "bands": bands,
+        "tree_version": project.tree.version.id,
+    }
+
+
 def tree_payload(project: Project) -> dict:
     engine = project.build_engine()
     nodes = []
@@ -73,8 +139,10 @@ def tree_payload(project: Project) -> dict:
         "sr": project.sr, "n": project.original.size,
         "duration": project.original.size / project.sr,
         "leaves": project.basis.leaves,
+        "tree_version": project.tree.version.id,
         "nodes": nodes,
         "strokes": [s.to_dict() for s in project.strokes],
+        "edits": [e.to_dict() for e in project.edits.edits],
         "resolution_notes": report.notes,
         "unresolved": [{"stroke_id": u.stroke_id, "reason": u.reason,
                         "candidates": u.candidates}
@@ -107,6 +175,24 @@ th{text-align:left}.warn{color:#b06000}.err{color:#b00020}.ok{color:#188038}
 </div>
 <div id="right">
   <div class="card">
+    <h2>spectral edit window</h2>
+    <div class="small">click a time/frequency cell to pick a band + window; edits route through the WPT kernel.</div>
+    <canvas id="spec" width="600" height="220" style="border:1px solid #ccc;width:100%;cursor:crosshair"></canvas>
+    <canvas id="wave" width="600" height="80" style="border:1px solid #ccc;width:100%;margin-top:4px"></canvas>
+    <div>
+      scale depth <input id="sdepth" type="range" min="1" max="8" value="4"
+        oninput="onScaleInput()"> <span id="sdlbl">4</span>
+      <button onclick="applyScale()">switch scale</button>
+      <span class="small" id="pickinfo">no pick</span>
+    </div>
+    <div>
+      edit gain <input id="sgain" value="0.5" size="5">
+      <button onclick="applySpecEdit()">apply edit to picked node</button>
+      <button onclick="undoLastEdit()">undo</button>
+      <span id="specmsg"></span>
+    </div>
+  </div>
+  <div class="card">
     <h2>basis</h2>
     wavelet <input id="wv" size="7"> level <input id="lv" size="2" type="number">
     mode <input id="md" size="11">
@@ -125,6 +211,15 @@ th{text-align:left}.warn{color:#b06000}.err{color:#b00020}.ok{color:#188038}
     <button onclick="addStroke('subtree')">subtree push (follows node)</button>
   </div>
   <div class="card">
+    <h2>node edits <span class="small" id="ver"></span></h2>
+    <div id="edits" class="small">no node edits</div>
+    gain <input id="egain" value="0.5" size="5">
+    t0 <input id="et0" value="0" size="6"> t1 <input id="et1" value="" size="6" placeholder="end">
+    <button onclick="addEdit()">edit selected leaf</button>
+    <button onclick="undoEdit()">undo last</button>
+    <div class="small">edits are keyed by node identity; undo and save agree on it.</div>
+  </div>
+  <div class="card">
     <h2>probe tones (realised gain after re-open)</h2>
     low <input id="plow" value="300" size="6"> high <input id="phigh" value="7000" size="6">
     <button onclick="probe()">measure</button>
@@ -141,8 +236,114 @@ let STATE=null, SEL="";
 async function api(path, opts){ const r=await fetch(path,opts); return r.json(); }
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 async function load(){
-  STATE=await api('/api/state'); SEL=SEL||''; renderTree(); renderStrokes(); renderUnresolved();
+  STATE=await api('/api/state'); SEL=SEL||''; renderTree(); renderStrokes(); renderUnresolved(); renderEdits();
   if(SEL) showNode(SEL);
+  await loadSpectrum();
+}
+
+// ---- spectral edit window ----------------------------------------------
+let SPEC=null, PICK=null;   // PICK = {path, t0, t1, f_lo, f_hi}
+async function loadSpectrum(){
+  SPEC=await api('/api/spectrum');
+  if(SPEC.error){
+    document.getElementById('specmsg').innerHTML='<span class="err">'+esc(SPEC.error)+'</span>';
+    SPEC=null; drawSpectrogram(); drawWave(); return;
+  }
+  drawSpectrogram(); drawWave();
+}
+function pickBandAt(freq){
+  if(!SPEC) return null;
+  let best=null, bestd=1e18;
+  for(const b of SPEC.bands){
+    const mid=(b.band_hz[0]+b.band_hz[1])/2;
+    const d=Math.abs(mid-freq);
+    if(freq>=b.band_hz[0]&&freq<b.band_hz[1]&&d<bestd){bestd=d;best=b;}
+  }
+  return best;
+}
+function drawSpectrogram(){
+  const c=document.getElementById('spec'), ctx=c.getContext('2d');
+  ctx.clearRect(0,0,c.width,c.height);
+  if(!SPEC) return;
+  const g=SPEC.spectrogram, rows=g.length, cols=g[0].length;
+  const cw=c.width/cols, ch=c.height/rows;
+  for(let r=0;r<rows;r++){
+    for(let k=0;k<cols;k++){
+      const v=g[r][k];             // 0..1 (low..high)
+      const rC=Math.round(255*v), gC=Math.round(180*v*v), bC=Math.round(90*(1-v));
+      ctx.fillStyle='rgb('+rC+','+gC+','+bC+')';
+      ctx.fillRect(k*cw, c.height-(r+1)*ch, Math.ceil(cw), Math.ceil(ch));
+    }
+  }
+  // band partition lines (from the current tree)
+  ctx.strokeStyle='rgba(60,120,255,0.8)'; ctx.lineWidth=1;
+  for(const b of SPEC.bands){
+    const y=c.height-(b.band_hz[1]/ (SPEC.sr/2))*c.height;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(c.width,y); ctx.stroke();
+  }
+  if(PICK){
+    const y0=c.height-(PICK.f_hi/(SPEC.sr/2))*c.height;
+    const y1=c.height-(PICK.f_lo/(SPEC.sr/2))*c.height;
+    const x0=(PICK.t0/SPEC.duration)*c.width, x1=(PICK.t1/SPEC.duration)*c.width;
+    ctx.strokeStyle='#00ff66'; ctx.lineWidth=2; ctx.strokeRect(x0,y0,Math.max(2,x1-x0),Math.max(2,y1-y0));
+  }
+}
+function drawWave(){
+  const c=document.getElementById('wave'), ctx=c.getContext('2d');
+  ctx.clearRect(0,0,c.width,c.height);
+  if(!SPEC) return;
+  const w=SPEC.waveform, cw=c.width/w.length, mid=c.height/2;
+  ctx.strokeStyle='#1a73e8'; ctx.beginPath();
+  for(let i=0;i<w.length;i++){
+    const h=w[i]*(c.height/2-2);
+    ctx.moveTo(i*cw, mid-h); ctx.lineTo(i*cw, mid+h);
+  }
+  ctx.stroke();
+}
+function onScaleInput(){document.getElementById('sdlbl').textContent=sdepth.value;}
+function canvasCoords(ev){
+  const c=document.getElementById('spec');
+  const rect=c.getBoundingClientRect();
+  const x=(ev.clientX-rect.left)/rect.width*c.width;
+  const y=(ev.clientY-rect.top)/rect.height*c.height;
+  return {x,y};
+}
+document.getElementById('spec').addEventListener('click', ev=>{
+  if(!SPEC) return;
+  const {x,y}=canvasCoords(ev);
+  const freq=(1-(y/220))*(SPEC.sr/2);
+  const t=(x/600)*SPEC.duration;
+  const b=pickBandAt(freq);
+  if(!b){document.getElementById('specmsg').innerHTML='<span class="err">no band there</span>';return;}
+  // snap the time window to a modest slice around the click
+  const half=Math.max(0.02, SPEC.duration/40);
+  const t0=Math.max(0,t-half), t1=Math.min(SPEC.duration,t+half);
+  PICK={path:b.path, t0, t1, f_lo:b.band_hz[0], f_hi:b.band_hz[1]};
+  document.getElementById('pickinfo').textContent='pick '+b.path+' '+
+    b.band_hz[0].toFixed(0)+'-'+b.band_hz[1].toFixed(0)+'Hz ['+t0.toFixed(2)+','+t1.toFixed(2)+']';
+  drawSpectrogram();
+});
+async function applySpecEdit(){
+  const msg=document.getElementById('specmsg');
+  if(!PICK){msg.innerHTML='<span class="err">pick a band first</span>';return;}
+  const r=await post('/api/edit',{path:PICK.path,gain:parseFloat(sgain.value),
+                                  t0:PICK.t0,t1:PICK.t1,tag:'spectral'});
+  if(r.error){msg.innerHTML='<span class="err">'+esc(r.error)+'</span>';return;}
+  msg.innerHTML='<span class="ok">edited '+esc(PICK.path)+'</span>';
+  await load();
+}
+async function undoLastEdit(){
+  const r=await post('/api/edit-undo',{tag:'spectral'});
+  document.getElementById('specmsg').innerHTML=r.undone?
+    '<span class="ok">undid '+esc(r.undone)+'</span>':
+    '<span class="err">nothing to undo</span>';
+  await load();
+}
+async function applyScale(){
+  const r=await post('/api/scale',{depth:parseInt(sdepth.value)});
+  if(r.error){document.getElementById('specmsg').innerHTML='<span class="err">'+esc(r.error)+'</span>';return;}
+  document.getElementById('specmsg').innerHTML='<span class="ok">scale -> depth '+sdepth.value+' ('+esc(r.migration?('remap '+r.migration.remapped+' / rej '+r.migration.rejected):'')+')</span>';
+  await load();
 }
 function renderTree(){
   const t=document.getElementById('tree'); t.innerHTML='';
@@ -187,6 +388,19 @@ function renderUnresolved(){
   el.innerHTML=STATE.unresolved.map(u=>'<div class="err">UNRESOLVED '+esc(u.stroke_id)+': '+esc(u.reason)
     +'<br>candidates: '+u.candidates.map(c=>'<button onclick="retarget(\\''+esc(u.stroke_id)+'\\',\\''+esc(c)+'\\')">'+esc(c)+'</button>').join(' ')+'</div>').join('');
 }
+function renderEdits(){
+  document.getElementById('ver').textContent='tree version '+(STATE.tree_version||'').slice(0,12);
+  const el=document.getElementById('edits');
+  if(!STATE.edits.length){el.innerHTML='<span class="small">no node edits</span>';return;}
+  el.innerHTML=STATE.edits.map(e=>'<div>'+esc(e.node.path||'<root>')+' gain='+e.gain
+    +' window=['+e.t0+','+(e.t1??'end')+']'+(e.tag?' tag='+esc(e.tag):'')+'</div>').join('');
+}
+async function addEdit(){
+  if(!SEL){alert('select a leaf node first');return;}
+  const r=await post('/api/edit',{path:SEL,gain:parseFloat(egain.value),t0:parseFloat(et0.value)||0,t1:et1.value?parseFloat(et1.value):null});
+  if(r.error){alert(r.error);return;} await load();
+}
+async function undoEdit(){const r=await post('/api/edit-undo',{path:SEL||null});if(r.error)alert(r.error);await load();}
 async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});return r.json();}
 async function rebase(){
   const r=await post('/api/rebase',{wavelet:wv.value,max_level:parseInt(lv.value),mode:md.value});
@@ -262,6 +476,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
             elif parsed.path == "/api/state":
                 self._json(tree_payload(proj))
+            elif parsed.path == "/api/spectrum":
+                try:
+                    self._json(spectrum_payload(proj))
+                except UnresolvedError as e:
+                    self._json({"error": "unresolved strokes: "
+                                + ", ".join(u.stroke_id
+                                            for u in e.report.unresolved)}, 409)
             elif parsed.path == "/api/node":
                 path = q["path"][0].replace("<root>", "")
                 self._json(_node_payload(proj, path))
@@ -314,8 +535,28 @@ class Handler(BaseHTTPRequestHandler):
                     proj.retarget(body["stroke_id"], body["node_path"])
                     self._json(tree_payload(proj))
                 elif parsed.path == "/api/subdivide":
-                    proj.basis.subdivide(body["node"])
-                    self._json(tree_payload(proj))
+                    migration = proj.subdivide(body["node"])
+                    self._json({**tree_payload(proj),
+                                "migration": migration.to_dict()})
+                elif parsed.path == "/api/edit":
+                    path = body["path"].replace("<root>", "")
+                    t1 = body.get("t1")
+                    rec = proj.add_node_edit(
+                        path, float(body["gain"]), float(body.get("t0", 0)),
+                        None if t1 in (None, "") else float(t1),
+                        tag=str(body.get("tag", "")))
+                    self._json({**tree_payload(proj),
+                                "node": str(rec.node)})
+                elif parsed.path == "/api/edit-undo":
+                    got = proj.undo(tag=body.get("tag"), path=body.get("path"))
+                    self._json({**tree_payload(proj),
+                                "undone": None if got is None
+                                else str(got.node)})
+                elif parsed.path == "/api/scale":
+                    depth = int(body["depth"])
+                    proj.rebase(max_level=depth)
+                    mig = proj.retarget_log[-1].get("migration", {})
+                    self._json({**tree_payload(proj), "migration": mig})
                 elif parsed.path == "/api/probe":
                     tone, lo, hi = probe_pair(proj.original.size, proj.sr,
                                               float(body["low"]), float(body["high"]))

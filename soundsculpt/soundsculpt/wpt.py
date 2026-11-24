@@ -12,76 +12,15 @@ from dataclasses import dataclass
 import numpy as np
 import pywt
 
+from .paths import (all_paths, freq_order_paths, nominal_band, band_index,
+                    path_from_band_index, descendants)
+from .tree import StaleTreeVersion, version_id_for
+
 # Path convention: 'a' = low-pass branch, 'd' = high-pass branch, root = ''.
 # Frequencies are cyclic (half-band) frequencies in [0, 0.5] * sr.
-
-
-def all_paths(depth: int) -> list[str]:
-    """Natural-order node paths at a fixed depth."""
-    if depth == 0:
-        return [""]
-    out = [""]
-    for _ in range(depth):
-        out = [p + b for p in out for b in ("a", "d")]
-    return out
-
-
-def freq_order_paths(depth: int) -> list[str]:
-    """Gray-code order in which fixed-depth leaves sort by ascending band."""
-    if depth == 0:
-        return [""]
-    n = 2 ** max(depth, 4)  # pywt needs enough samples for the full tree
-    wp = pywt.WaveletPacket(np.zeros(n), "db1", mode="periodization",
-                            maxlevel=depth)
-    return [n.path for n in wp.get_level(depth, "freq")]
-
-
-def nominal_band(path: str, sr: int) -> tuple[float, float]:
-    """Nominal dyadic band [lo, hi) in Hz for a node.
-
-    WPT frequency ordering is a Gray-code permutation of the uniform dyadic
-    grid, not recursive halving: a 'd' branch does not always keep the upper
-    half of its parent's band.  The band is therefore read from the node's
-    frequency index.  These are *nominal* bands; real wavelet filters overlap
-    them (see leakage_profile).
-    """
-    depth = len(path)
-    width = (0.5 * sr) / (2 ** depth) if depth else 0.5 * sr
-    k = band_index(path) if depth else 0
-    return k * width, (k + 1) * width
-
-
-def band_index(path: str) -> int:
-    """Frequency-sorted index 0..2**d-1 of a node within its depth.
-
-    Matches pywt's 'freq' ordering.  Recursively, child index = (parent << 1)
-    with the new low bit equal to the parent's low bit on an 'a' branch and
-    its complement on a 'd' branch.
-    """
-    k = 0
-    for branch in path:
-        bit = k & 1
-        k = (k << 1) | (bit if branch == "a" else 1 - bit)
-    return k
-
-
-def path_from_band_index(index: int, depth: int) -> str:
-    """Inverse of band_index: build the natural-order path for band k."""
-    bits = [(index >> (depth - 1 - i)) & 1 for i in range(depth)]
-    out = []
-    for i, bit in enumerate(bits):
-        prev = 0 if i == 0 else bits[i - 1]
-        out.append("a" if bit == prev else "d")
-    return "".join(out)
-
-
-def descendants(path: str, max_depth: int) -> list[str]:
-    if len(path) >= max_depth:
-        return [path]
-    out = []
-    for p in all_paths(max_depth - len(path)):
-        out.append(path + p)
-    return out
+#
+# The pure path helpers live in ``paths`` and are re-exported here so existing
+# ``from soundsculpt.wpt import all_paths`` callers keep working unchanged.
 
 
 @dataclass
@@ -182,68 +121,56 @@ class WPTEngine:
                 i1 / n_coeffs * duration)
 
     # ------------------------------------------------------------- reconstruction
-    def reconstruct(self, leaf_paths: list[str] | None = None) -> np.ndarray:
-        """Reconstruct from a valid leaf basis (or the full deepest tree).
+    def reconstruct(self, leaf_paths: list[str] | None = None, *,
+                    tree_version: str | None = None) -> np.ndarray:
+        """Reconstruct from an explicit leaf basis (or the full deepest tree).
 
-        Coarse leaves are pushed down to max_level by forward-transforming
-        their coefficients.  This guarantees no node is counted together with
-        its ancestor/descendant: the pushed-down leaves form a disjoint
-        partition of the deepest level.
+        Coarse leaves are *not* pushed down to max_level.  pywt reconstructs a
+        partial packet directly from whichever nodes carry data, so a coarse
+        leaf keeps its own identity instead of being silently expanded into a
+        block of deepest-level coefficients.  This is what preserves original
+        edit ownership across a coarse/fine cut.
+
+        When ``tree_version`` is given it must equal the version implied by
+        ``leaf_paths``; the inverse transform never reads an ambient tree.
         """
         if leaf_paths is None:
             leaf_paths = all_paths(self.max_level)
+        else:
+            leaf_paths = list(leaf_paths)
         self._validate_leaf_basis(leaf_paths)
+        if tree_version is not None:
+            current = version_id_for(self.wavelet, self.max_level, self.mode,
+                                     self.sr, self.n, leaf_paths)
+            if tree_version != current:
+                raise StaleTreeVersion(
+                    f"reconstruct asked for tree version "
+                    f"{str(tree_version)[:12]} but leaf basis resolves to "
+                    f"{current[:12]}")
         zero = pywt.WaveletPacket(np.zeros_like(self.signal), self.wavelet,
                                   mode=self.mode, maxlevel=self.max_level)
         for leaf in leaf_paths:
-            data = self.coeffs(leaf)
-            depth = self.max_level - len(leaf)
-            if depth == 0:
-                zero[leaf].data = data.copy()
-            else:
-                sub = pywt.WaveletPacket(data, self.wavelet, mode=self.mode,
-                                         maxlevel=depth)
-                for fn in sub.get_level(depth, "natural"):
-                    zero[leaf + fn.path].data = fn.data.copy()
+            zero[leaf].data = self.coeffs(leaf).copy()
         return zero.reconstruct(update=False)
 
     def node_contribution(self, path: str) -> np.ndarray:
         """Signal reconstructed from the subtree under one node only.
 
-        Implemented as deepest-level zeroing, so it matches reconstruct()
-        exactly and works for internal nodes too.
+        A subtree's finest materialisation lives at the deepest level, so the
+        contribution copies the current deepest descendants of ``path`` into a
+        fresh zero packet.  Building a fresh packet (rather than mutating and
+        restoring ``self.wp``) keeps the engine readonly during audition and
+        leakage measurement, and still reflects edits made at any descendant.
         """
-        backup = {p: self.coeffs(p).copy()
-                  for p in all_paths(self.max_level)}
-        try:
-            keep = set(descendants(path, self.max_level))
-            for p in backup:
-                if p not in keep:
-                    self.wp[p].data = np.zeros_like(backup[p])
-            return self.wp.reconstruct(update=False)
-        finally:
-            for p, d in backup.items():
-                self.wp[p].data = d
+        zero = pywt.WaveletPacket(np.zeros_like(self.signal), self.wavelet,
+                                  mode=self.mode, maxlevel=self.max_level)
+        for p in descendants(path, self.max_level):
+            zero[p].data = self.wp[p].data.copy()
+        return zero.reconstruct(update=False)
 
     def _validate_leaf_basis(self, leaf_paths: list[str]) -> None:
-        if not leaf_paths:
-            raise ValueError("empty leaf basis")
-        # disjointness: no path is a prefix of another
-        s = sorted(leaf_paths, key=len)
-        for i, p in enumerate(s):
-            for q in s[i + 1:]:
-                if q.startswith(p):
-                    raise ValueError(
-                        f"invalid basis: {p} is an ancestor of {q}; a node "
-                        "and its descendants cannot both be reconstructed")
-        # coverage: every deepest leaf has exactly one ancestor in the basis
-        covered = set()
-        for leaf in leaf_paths:
-            covered.update(descendants(leaf, self.max_level))
-        full = set(all_paths(self.max_level))
-        if covered != full:
-            missing = sorted(full - covered)
-            raise ValueError(f"incomplete leaf basis, missing under {missing[:4]}")
+        from .tree import validate_leaf_basis
+        validate_leaf_basis(list(leaf_paths), self.max_level)
 
     # ------------------------------------------------------------- support/edges
     def _measure_support(self, path: str, tol: float = 1e-9

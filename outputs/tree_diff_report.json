@@ -1,0 +1,33 @@
+{
+  "signal": "chirp",
+  "n": 32768,
+  "sr": 44100,
+  "boundary_short_clip": {
+    "clip_samples": 2205,
+    "version_id": "4201469b9298",
+    "max_abs_diff": 0.0,
+    "pass": true
+  },
+  "scale_switch": {
+    "from_depth": 3,
+    "to_depth": 5,
+    "reconstruction_error_signal": 8.326672684688674e-16,
+    "full_length_render_max_diff": 5.551115123125783e-16,
+    "windowed_render_max_diff_reported_not_equal": 0.17849386405036416,
+    "ownership_before": [
+      "76cf473e88bb:ad"
+    ],
+    "ownership_after": [
+      "1f3faf40210e:adaaa",
+      "1f3faf40210e:adaad",
+      "1f3faf40210e:adada",
+      "1f3faf40210e:adadd",
+      "1f3faf40210e:addaa",
+      "1f3faf40210e:addad",
+      "1f3faf40210e:addda",
+      "1f3faf40210e:adddd"
+    ],
+    "under_ancestor": true,
+    "pass": true
+  }
+}
